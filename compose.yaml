@@ -1,0 +1,15 @@
+services:
+  app:
+    build: .
+    ports:
+      - "127.0.0.1:3000:3000"
+    environment:
+      NODE_ENV: development
+      APP_ORIGIN: http://localhost:3000
+      DATA_DIR: /app/data
+      SETUP_TOKEN: ${SETUP_TOKEN:?Bitte SETUP_TOKEN in .env setzen}
+    volumes:
+      - return_data:/app/data
+    restart: unless-stopped
+volumes:
+  return_data:

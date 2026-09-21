@@ -1,0 +1,21 @@
+# Entwurf: Anlegen dieses Dienstes verursacht Hostingkosten.
+# Vor Bereitstellung den aktuellen Preis im Render-Konto bestätigen.
+services:
+  - type: web
+    name: ibm-return
+    runtime: docker
+    plan: starter
+    region: frankfurt
+    numInstances: 1
+    healthCheckPath: /api/health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: DATA_DIR
+        value: /app/data
+      - key: SETUP_TOKEN
+        generateValue: true
+    disk:
+      name: return-data
+      mountPath: /app/data
+      sizeGB: 1

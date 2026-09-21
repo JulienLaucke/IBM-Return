@@ -1,0 +1,11 @@
+import { resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { createApp } from './app.mjs';
+const root=fileURLToPath(new URL('../',import.meta.url));
+const production=process.env.NODE_ENV==='production';
+const port=Number(process.env.PORT||3000);
+const origin=process.env.APP_ORIGIN||process.env.RENDER_EXTERNAL_URL||(production?'':`http://localhost:${port}`);
+if(!origin)throw new Error('APP_ORIGIN fehlt.');
+const app=await createApp({database:resolve(process.env.DATA_DIR||resolve(root,'data'),'returns.sqlite'),origin,production,setupToken:process.env.SETUP_TOKEN,staticDir:resolve(root,'dist')});
+app.server.listen(port,process.env.HOST||(production?'0.0.0.0':'127.0.0.1'),()=>console.log(`IBM@Return gestartet (Port ${port}).`));
+for(const event of ['SIGTERM','SIGINT'])process.once(event,()=>{void app.close().then(()=>process.exit(0));});
