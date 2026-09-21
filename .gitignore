@@ -4,3 +4,8 @@ data/
 .env.*
 !.env.example
 *.tsbuildinfo
+
+.venv/
+__pycache__/
+*.py[cod]
+backups/

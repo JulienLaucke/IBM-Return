@@ -4,3 +4,9 @@ node_modules
 data
 .git
 *.zip
+
+.venv
+__pycache__
+*.pyc
+tests
+backups
