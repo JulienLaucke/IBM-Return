@@ -1,25 +1,25 @@
-# IBM@Return – eigenständige Version
+# IBM@Return
 
-Rechnerrücksendungen gemeinsam verwalten, mit eigener Anmeldung und genau zwei Konten. Ein ChatGPT-Konto ist zum Betrieb und zur Nutzung dieser Version nicht erforderlich.
+Webanwendung zur gemeinsamen Verwaltung von Rechnerrücksendungen bei Offboarding und Gerätetausch. Zwei Benutzerkonten greifen auf dieselbe Rücksendeliste zu.
 
-## Lieferumfang und Stand
+## Funktionen
 
-- Bestehende deutschsprachige Oberfläche mit DHL/FedEx, Mitarbeitername, Versanddatum, Eingangsdatum, Anlass, optionaler Geräte- und Sendungsnummer.
+- Deutschsprachige Oberfläche mit DHL/FedEx, Mitarbeitername, Versanddatum, Eingangsdatum, Anlass, optionaler Geräte- und Sendungsnummer.
 - Zwei E-Mail-/Passwort-Konten; keine offene Registrierung.
 - Gemeinsame Liste, Bearbeiten, Eingang nachtragen und Löschen mit Bestätigung.
 - Dauerhafte SQLite-Datenbank; Schutz vor dem Überschreiben zwischenzeitlicher Änderungen.
 - Passwortwechsel und Abmelden; acht Stunden gültige serverseitige Sitzungen.
 - Ersteinrichtung mit einem einmaligen Einrichtungsschlüssel.
 - Startfähige, bereits gebaute Oberfläche in `dist/` und ein Node.js-Server ohne zusätzliche Laufzeitpakete.
-- Dockerfile, lokale Docker-Compose-Konfiguration und Render-Konfiguration für die spätere Bereitstellung.
+- Dockerfile, lokale Docker-Compose-Konfiguration und Render-Konfiguration für den Betrieb.
 
-Diese Version wurde lokal gebaut und mit automatisierten HTTP-Tests geprüft. Sie wurde noch nicht bei einem externen Hostinganbieter bereitgestellt. Der vorhandene ChatGPT-Sites-Link zeigt weiterhin die bisherige Version mit ChatGPT-Anmeldung. Bestehende Daten aus dieser bisherigen Version sind nicht in diesem Paket enthalten. Eine Datenübernahme kann bei der tatsächlichen Umstellung erfolgen.
+Die Anwendung läuft unter [ibm-return.onrender.com](https://ibm-return.onrender.com). Der Render-Dienst verwendet einen dauerhaften Datenträger in der Region Frankfurt. Zugang erhalten die beiden bei der Ersteinrichtung angelegten Konten.
 
 ## Schnell lokal starten
 
 Voraussetzung: Node.js 24.14 oder neuer, empfohlen Node.js 24 LTS. Für den Start der mitgelieferten Version ist kein `npm install` notwendig.
 
-1. Das ZIP entpacken und im Ordner `ibm-return-standalone` ein Terminal öffnen.
+1. Das Repository klonen oder als ZIP herunterladen und im Projektordner ein Terminal öffnen.
 2. Lokale Konfiguration erzeugen:
 
 ```sh
@@ -42,9 +42,9 @@ Die lokale Konfiguration bindet nur an den eigenen Rechner. Für die gemeinsame 
 
 ## Externe Bereitstellung: Render
 
-`render.yaml` enthält eine konkrete Konfiguration für einen Docker-Webdienst mit genau einer Instanz, Region Frankfurt und 1 GB dauerhaftem Speicher. Das Anlegen verursacht Hostingkosten; vor dem Erstellen den aktuellen Gesamtpreis im Render-Konto prüfen. Die Verbindung zum Konto und die Bestätigung des kostenpflichtigen Dienstes stehen noch aus.
+`render.yaml` enthält eine konkrete Konfiguration für einen Docker-Webdienst mit genau einer Instanz, Region Frankfurt und 1 GB dauerhaftem Speicher. Das Anlegen verursacht Hostingkosten; vor dem Erstellen den aktuellen Gesamtpreis im Render-Konto prüfen.
 
-1. Dieses Projekt in einem eigenen privaten Git-Repository bereitstellen. `dist/`, `server/`, `Dockerfile` und `render.yaml` müssen enthalten sein; `.env` und `data/` nicht hochladen.
+1. Das Git-Repository mit Render verbinden. `dist/`, `server/`, `Dockerfile` und `render.yaml` müssen enthalten sein; `.env` und `data/` nicht hochladen.
 2. In Render dieses Repository als Blueprint verbinden und die Kosten prüfen.
 3. Render baut das Docker-Image aus der bereits mitgelieferten Oberfläche und startet den Server. Render setzt `RENDER_EXTERNAL_URL`; die App verwendet diese HTTPS-Adresse als zulässigen Ursprung.
 4. In den Umgebungsvariablen des Dienstes den automatisch erzeugten `SETUP_TOKEN` anzeigen. Nur zur Ersteinrichtung verwenden.
@@ -89,7 +89,7 @@ docker compose up --build
 
 ## Entwicklung
 
-Frontend: React, TypeScript, Vite, Tailwind und die vorhandenen UI-Komponenten. Backend: Node.js HTTP, `node:sqlite`, `node:crypto`. Die übernommenen Build-Abhängigkeiten und ihr pnpm-Lockfile sind enthalten; der produktive Server benötigt keine npm-Pakete.
+Frontend: React, TypeScript, Vite und Tailwind. Backend: Node.js HTTP, `node:sqlite` und `node:crypto`. Die Build-Abhängigkeiten sind im pnpm-Lockfile festgehalten; der produktive Server benötigt keine npm-Pakete.
 
 ```sh
 corepack pnpm install --frozen-lockfile
@@ -115,7 +115,7 @@ Die automatisierten Tests prüfen reale HTTP-Anfragen gegen eine temporäre Date
 - Passwortwechsel, Sitzungsablauf, Logout und Anmelde-Drosselung.
 - Kein HTTP-Zugriff auf Serverdateien, Datenbank oder Konfiguration.
 
-Der Build und die TypeScript-Prüfung waren erfolgreich. Ein Browser-End-to-End-Test und ein Test beim externen Hostinganbieter stehen noch aus. Die App enthält keine automatische DHL-/FedEx-Sendungsabfrage und keine IBM-Systemanbindung.
+Build, TypeScript-Prüfung und automatisierte HTTP-Tests wurden erfolgreich ausgeführt. Nach der Bereitstellung wurde der öffentliche Health-Endpunkt erfolgreich geprüft. Ein vollständiger Browser-End-to-End-Test steht noch aus. Versand- und Eingangsdatum werden manuell gepflegt; die App enthält keine automatische DHL-/FedEx-Sendungsabfrage und keine IBM-Systemanbindung.
 
 ## Technische Referenzen
 
