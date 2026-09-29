@@ -6,6 +6,9 @@ Webanwendung zur gemeinsamen Verwaltung von Rechnerrücksendungen bei Offboardin
 
 - Deutschsprachige Oberfläche mit DHL/FedEx, Mitarbeitername, Versanddatum, Eingangsdatum, Anlass, optionaler Geräte- und Sendungsnummer.
 - Zwei E-Mail-/Passwort-Konten; keine offene Registrierung.
+- Anlass „Remote Onboarding“ sowie optionale Angaben zu Rechnermodell und Standort (Magdeburg, Frankfurt, Köln, München).
+- Ein optionales Bild pro Rücksendung, mit Vorschau und geschütztem Abruf.
+- Automatische Erstelleranzeige; den eigenen Anzeigenamen unter **Profil** festlegen.
 - Gemeinsame Liste, Bearbeiten, Eingang nachtragen und Löschen mit Bestätigung.
 - Dauerhafte SQLite-Datenbank; Schutz vor dem Überschreiben zwischenzeitlicher Änderungen.
 - Passwortwechsel und Abmelden; acht Stunden gültige serverseitige Sitzungen.
@@ -68,6 +71,14 @@ Beim ersten Python-Start mit vorhandener Datenbank wird vor der Initialisierung 
 
 Der Container verwendet weiterhin UID 1000 und `/app/data`. `APP_ENV=production` aktiviert den Produktionsmodus; vorhandenes `NODE_ENV=production` wird als kompatible Alternative erkannt. Gunicorn läuft mit einem Prozess und vier Threads.
 
+## Bilder und zusätzliche Angaben
+
+Im Erfassungs- und Bearbeitungsdialog sind Modell, Standort und Bild optional. Zulässig sind JPG, PNG und WebP mit maximal 5 MB und 20 Megapixeln. Der Server prüft das Bild, richtet es aus und speichert eine JPEG-Kopie mit maximal 1600 Pixeln an der längsten Seite. EXIF- und GPS-Metadaten werden entfernt. Bilder lassen sich ersetzen oder entfernen und sind nur für angemeldete Benutzer abrufbar.
+
+Bilder liegen in derselben SQLite-Datenbank wie die Einträge und sind in Datenbanksicherungen enthalten. Beim Löschen einer Rücksendung wird ihr Bild ebenfalls entfernt.
+
+Der Ersteller wird vom Server aus der Sitzung gesetzt und bleibt beim Bearbeiten durch den Kollegen erhalten. Für ältere Einträge wird die bereits gespeicherte Benutzer-ID verwendet. Unter **Profil** kann jeder seinen Anzeigenamen (z. B. Julien oder Georg) setzen; andernfalls erscheint die E-Mail-Adresse. Modell und Standort bleiben bei bestehenden Einträgen zunächst leer. Vor der Erweiterung der Tabellen wird einmalig `DATA_DIR/before-shipment-details.sqlite` gesichert.
+
 ## Betrieb, Sicherung und Wiederherstellung
 
 Die Datei `returns.sqlite` sowie die SQLite-Begleitdateien liegen unter `DATA_DIR`. Dieser Ordner wird niemals über HTTP ausgeliefert. Das Datenverzeichnis nicht löschen oder durch einen leeren Datenträger ersetzen: Ohne die Datenbank fehlen Konten und Rücksendungen.
@@ -129,8 +140,10 @@ Die automatisierten Tests prüfen reale HTTP-Anfragen gegen eine temporäre Date
 - Kein HTTP-Zugriff auf Serverdateien, Datenbank oder Konfiguration.
 - Übernahme einer synthetischen Datenbank aus dem bisherigen Backend, einschließlich Passwort-Hashes und Sitzungen.
 - Gleichzeitige Schreibzugriffe beider Konten und konsistente Sicherungen.
+- Neue optionale Felder, stabile Erstellerzuordnung und eigene Profilnamen.
+- Bildvalidierung, Größenlimits, Metadatenentfernung, geschützter Abruf, Austausch und Löschung.
 
-Build, TypeScript-Prüfung und automatisierte HTTP-Tests wurden erfolgreich ausgeführt. Nach der Bereitstellung wurde der öffentliche Health-Endpunkt erfolgreich geprüft. Ein vollständiger Browser-End-to-End-Test steht noch aus. Versand- und Eingangsdatum werden manuell gepflegt; die App enthält keine automatische DHL-/FedEx-Sendungsabfrage und keine IBM-Systemanbindung.
+Build, TypeScript-Prüfung und automatisierte HTTP-Tests wurden erfolgreich ausgeführt. Nach der Bereitstellung wurde der öffentliche Health-Endpunkt erfolgreich geprüft. Die zusätzlichen Felder, Erstellerzuordnung und Bildfunktionen werden durch automatisierte API-Tests geprüft. Versand- und Eingangsdatum werden manuell gepflegt; die App enthält keine automatische DHL-/FedEx-Sendungsabfrage und keine IBM-Systemanbindung.
 
 ## Technische Referenzen
 

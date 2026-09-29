@@ -1,4 +1,4 @@
-"""SQLite access without schema changes to existing installations."""
+"""SQLite access with additive, backward-compatible migrations."""
 from contextlib import contextmanager
 import os
 from pathlib import Path
@@ -79,6 +79,19 @@ def initialize(path):
     try:
         db.execute('PRAGMA journal_mode=WAL')
         db.executescript(SCHEMA)
+        user_columns = {row['name'] for row in db.execute('PRAGMA table_info(users)')}
+        shipment_columns = {row['name'] for row in db.execute('PRAGMA table_info(shipments)')}
+        if 'display_name' not in user_columns or not {'model', 'location'} <= shipment_columns:
+            migration_backup = path.parent / 'before-shipment-details.sqlite'
+            if not migration_backup.exists():
+                backup_database(path, migration_backup)
+            with transaction(db):
+                if 'display_name' not in user_columns:
+                    db.execute("ALTER TABLE users ADD COLUMN display_name TEXT NOT NULL DEFAULT ''")
+                for column in ('model', 'location'):
+                    if column not in shipment_columns:
+                        db.execute(f"ALTER TABLE shipments ADD COLUMN {column} TEXT NOT NULL DEFAULT ''")
+        db.execute('CREATE TABLE IF NOT EXISTS shipment_images (shipment_id TEXT PRIMARY KEY REFERENCES shipments(id) ON DELETE CASCADE, data BLOB NOT NULL)')
         os.chmod(path, 0o600)
     finally:
         db.close()

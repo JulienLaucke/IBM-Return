@@ -14,9 +14,10 @@ from .database import connect, initialize, transaction
 from .security import (digest, equal_secret, hash_password, normalize_email,
                        valid_email, valid_password, verify_password)
 from .validation import ApiError, shipment_input, valid_version
+from .images import image_input
 
-FIELDS = 'id,name,carrier,reason,device,tracking,shipped,arrived,version,created'
-EDITABLE = ('name', 'carrier', 'reason', 'device', 'tracking', 'shipped', 'arrived')
+FIELDS = 'id,name,carrier,reason,device,tracking,shipped,arrived,version,created,model,location,creator'
+EDITABLE = ('name', 'carrier', 'reason', 'device', 'tracking', 'shipped', 'arrived', 'model', 'location')
 SESSION_SECONDS = 8 * 60 * 60
 
 
@@ -40,7 +41,7 @@ def create_app(*, database, origin, production=True, setup_token=None, static_di
             raise ValueError('Für die Ersteinrichtung ist SETUP_TOKEN mit mindestens 32 Zeichen erforderlich.')
     initial.close()
     app = Flask(__name__, static_folder=None)
-    app.config.update(MAX_CONTENT_LENGTH=16384, DATABASE=str(database))
+    app.config.update(MAX_CONTENT_LENGTH=7 * 1024 * 1024, DATABASE=str(database))
     app.json.ensure_ascii = False
     cookie_name = '__Host-ibm_return' if production else 'ibm_return_dev'
     dummy_hash = hash_password(secrets.token_hex(24))
@@ -74,16 +75,20 @@ def create_app(*, database, origin, production=True, setup_token=None, static_di
         token = request.cookies.get(cookie_name, '')
         user = None
         if re.fullmatch(r'[a-f0-9]{64}', token):
-            user = db().execute('SELECT u.id,u.email,s.token_hash FROM sessions s JOIN users u ON u.id=s.user_id WHERE s.token_hash=? AND s.expires>?', (digest(token), now_ms())).fetchone()
+            user = db().execute('SELECT u.id,u.email,u.display_name,s.token_hash FROM sessions s JOIN users u ON u.id=s.user_id WHERE s.token_hash=? AND s.expires>?', (digest(token), now_ms())).fetchone()
         if user is None:
             raise ApiError('Deine Sitzung ist abgelaufen. Bitte erneut anmelden.', 401)
         return user
 
-    def body():
+    def body(*, image_allowed=False):
         if not request.headers.get('Content-Type', '').lower().startswith('application/json'):
             raise ApiError('JSON-Eingabe erforderlich.', 415)
         try:
+            if not image_allowed and request.content_length and request.content_length > 16384:
+                raise ApiError('Eingabe zu groß.', 413)
             raw = request.get_data()
+            if not image_allowed and len(raw) > 16384:
+                raise ApiError('Eingabe zu groß.', 413)
             value = json.loads(raw, parse_constant=lambda _v: (_ for _ in ()).throw(ValueError()))
         except (ValueError, UnicodeError):
             raise ApiError('Ungültige Eingabe.') from None
@@ -101,7 +106,7 @@ def create_app(*, database, origin, production=True, setup_token=None, static_di
         db().execute('DELETE FROM sessions WHERE token_hash IN (SELECT token_hash FROM sessions WHERE user_id=? ORDER BY expires DESC LIMIT -1 OFFSET 4)', (user['id'],))
         token = secrets.token_hex(32)
         db().execute('INSERT INTO sessions (token_hash,user_id,expires) VALUES (?,?,?)', (digest(token), user['id'], now_ms() + SESSION_SECONDS * 1000))
-        return set_cookie(jsonify(user={'email': user['email']}), token)
+        return set_cookie(jsonify(user={'email': user['email'], 'displayName': user['display_name']}), token)
 
     @app.before_request
     def check_request():
@@ -187,7 +192,34 @@ def create_app(*, database, origin, production=True, setup_token=None, static_di
 
     @app.get('/api/auth/me')
     def me():
-        return jsonify(user={'email': require_session()['email']})
+        user = require_session()
+        return jsonify(user={'email': user['email'], 'displayName': user['display_name']})
+
+    @app.post('/api/auth/profile')
+    def profile():
+        user = require_session()
+        name = body().get('displayName')
+        if not isinstance(name, str) or len(name.strip()) > 80 or any(ord(c) < 32 or 0xD800 <= ord(c) <= 0xDFFF for c in name):
+            raise ApiError('Bitte einen Anzeigenamen mit maximal 80 Zeichen eingeben.')
+        db().execute('UPDATE users SET display_name=? WHERE id=?', (name.strip(), user['id']))
+        return jsonify(user={'email': user['email'], 'displayName': name.strip()})
+
+    def shipment_result(row):
+        result = dict(row)
+        owner = db().execute('SELECT email,display_name FROM users WHERE id=?', (row['creator'],)).fetchone()
+        result['creatorName'] = owner['display_name'] or owner['email']
+        result['creatorEmail'] = owner['email']
+        has_image = db().execute('SELECT 1 FROM shipment_images WHERE shipment_id=?', (row['id'],)).fetchone()
+        result['imageUrl'] = f"/api/shipments/{row['id']}/image?v={row['version']}" if has_image else ''
+        return result
+
+    @app.get('/api/shipments/<shipment_id>/image')
+    def shipment_image(shipment_id):
+        require_session()
+        image = db().execute('SELECT data FROM shipment_images WHERE shipment_id=?', (shipment_id,)).fetchone()
+        if not image:
+            raise ApiError('Bild nicht gefunden.', 404)
+        return Response(image['data'], content_type='image/jpeg', headers={'Content-Disposition': 'inline; filename="rechner.jpg"'})
 
     @app.post('/api/auth/logout')
     def logout():
@@ -218,33 +250,47 @@ def create_app(*, database, origin, production=True, setup_token=None, static_di
     def shipments():
         user = require_session()
         if request.method in ('GET', 'HEAD'):
-            return jsonify(shipments=[dict(row) for row in db().execute(f'SELECT {FIELDS} FROM shipments ORDER BY created DESC,id DESC')])
-        raw = body()
+            return jsonify(shipments=[shipment_result(row) for row in db().execute(f'SELECT {FIELDS} FROM shipments ORDER BY created DESC,id DESC')])
+        raw = body(image_allowed=request.method in ('POST', 'PATCH'))
         if request.method == 'DELETE':
             if not isinstance(raw.get('id'), str) or not valid_version(raw.get('version')):
                 raise ApiError('Ungültige Rücksendung.')
             if not db().execute('DELETE FROM shipments WHERE id=? AND version=?', (raw['id'], raw['version'])).rowcount:
                 raise ApiError('Eintrag inzwischen geändert oder entfernt. Bitte die Liste aktualisieren.', 409)
             return jsonify(ok=True)
+        # Older clients omit new optional fields: retain them on edits.
+        if request.method == 'PATCH':
+            previous = db().execute('SELECT model,location FROM shipments WHERE id=?', (raw.get('id') if isinstance(raw.get('id'), str) else '',)).fetchone()
+            if previous:
+                for key in ('model', 'location'):
+                    raw.setdefault(key, previous[key])
         v = shipment_input(raw)
+        photo = image_input(raw['photo']) if 'photo' in raw else None
         values = [v[key] for key in EDITABLE]
         status = 200
         with transaction(db()):
             if request.method == 'POST':
                 existing = db().execute(f'SELECT {FIELDS} FROM shipments WHERE id=?', (v['id'],)).fetchone()
                 if existing:
-                    if any(v[key] != existing[key] for key in EDITABLE):
+                    stored_photo = db().execute('SELECT data FROM shipment_images WHERE shipment_id=?', (v['id'],)).fetchone()
+                    photo_conflict = 'photo' in raw and photo != (stored_photo['data'] if stored_photo else None)
+                    if photo_conflict or any(v[key] != existing[key] for key in EDITABLE):
                         raise ApiError('Eintrag existiert bereits mit anderen Angaben.', 409)
                 else:
-                    db().execute('INSERT INTO shipments (name,carrier,reason,device,tracking,shipped,arrived,id,created,creator,updater) VALUES (?,?,?,?,?,?,?,?,?,?,?)', (*values, v['id'], timestamp(), user['id'], user['id']))
+                    db().execute('INSERT INTO shipments (name,carrier,reason,device,tracking,shipped,arrived,model,location,id,created,creator,updater) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)', (*values, v['id'], timestamp(), user['id'], user['id']))
                     status = 201
             else:
                 if not valid_version(raw.get('version')):
                     raise ApiError('Ungültige Version.')
-                result = db().execute('UPDATE shipments SET name=?,carrier=?,reason=?,device=?,tracking=?,shipped=?,arrived=?,updater=?,version=version+1 WHERE id=? AND version=?', (*values, user['id'], v['id'], raw['version']))
+                result = db().execute('UPDATE shipments SET name=?,carrier=?,reason=?,device=?,tracking=?,shipped=?,arrived=?,model=?,location=?,updater=?,version=version+1 WHERE id=? AND version=?', (*values, user['id'], v['id'], raw['version']))
                 if not result.rowcount:
                     raise ApiError('Dieser Eintrag wurde inzwischen geändert oder entfernt. Bitte die Liste aktualisieren.', 409)
-            result = dict(db().execute(f'SELECT {FIELDS} FROM shipments WHERE id=?', (v['id'],)).fetchone())
+            if 'photo' in raw:
+                if photo is None:
+                    db().execute('DELETE FROM shipment_images WHERE shipment_id=?', (v['id'],))
+                else:
+                    db().execute('INSERT INTO shipment_images (shipment_id,data) VALUES (?,?) ON CONFLICT(shipment_id) DO UPDATE SET data=excluded.data', (v['id'], photo))
+            result = shipment_result(db().execute(f'SELECT {FIELDS} FROM shipments WHERE id=?', (v['id'],)).fetchone())
         return jsonify(shipment=result), status
 
     @app.route('/', methods=['GET', 'POST', 'PATCH', 'DELETE'])

@@ -1,3 +1,6 @@
+import base64
+import io
+from PIL import Image
 import concurrent.futures
 import http.client
 import json
@@ -105,7 +108,7 @@ class AppTests(unittest.TestCase):
         db = connect(self.database)
         try:
             with self.assertRaises(sqlite3.IntegrityError):
-                db.execute("INSERT INTO users VALUES (3,'third@example.test','hash','now')")
+                db.execute("INSERT INTO users (id,email,password_hash,created) VALUES (3,'third@example.test','hash','now')")
             self.assertNotIn(USERS[0]['password'], str([tuple(r) for r in db.execute('SELECT * FROM users')]))
         finally:
             db.close()
@@ -180,6 +183,100 @@ class AppTests(unittest.TestCase):
             result = self.call('/api/auth/login', 'POST', {'email': 'missing@example.test', 'password': 'wrong'})
         self.assertEqual(result[0], 429)
         self.assertEqual(result[2]['Retry-After'], '900')
+
+    @staticmethod
+    def photo(color='blue', fmt='PNG'):
+        with Image.new('RGB', (80, 60), color) as image:
+            data = io.BytesIO()
+            image.save(data, format=fmt)
+        mime = {'PNG': 'png', 'JPEG': 'jpeg', 'WEBP': 'webp'}[fmt]
+        return 'data:image/' + mime + ';base64,' + base64.b64encode(data.getvalue()).decode()
+
+    def test_optional_details_and_creator_profile(self):
+        old = self.call('/api/shipments', cookie=COOKIE1)[1]['shipments'][0]
+        self.assertEqual((old['model'], old['location'], old['imageUrl']), ('', '', ''))
+        self.assertEqual(old['creatorEmail'], USERS[0]['email'])
+        self.assertEqual(self.call('/api/auth/profile', 'POST', {'displayName': 'Julien'})[0], 401)
+        self.assertEqual(self.call('/api/auth/profile', 'POST', {'displayName': 'Julien'}, COOKIE1, origin='https://other.example')[0], 403)
+        self.assertEqual(self.call('/api/auth/profile', 'POST', {'displayName': 'Julien', 'id': 2}, COOKIE1)[0], 200)
+        self.assertEqual(self.call('/api/auth/profile', 'POST', {'displayName': 'Georg'}, COOKIE2)[0], 200)
+        self.assertEqual(self.call('/api/auth/me', cookie=COOKIE1)[1]['user']['displayName'], 'Julien')
+        draft = dict(self.draft(), reason='Remote Onboarding', model='ThinkPad T14 Gen 4', location='Magdeburg', creator=1)
+        item = self.call('/api/shipments', 'POST', draft, COOKIE2)[1]['shipment']
+        self.assertEqual((item['creator'], item['creatorName']), (2, 'Georg'))
+        for location in ['Frankfurt', 'Köln', 'München', '']:
+            result = self.call('/api/shipments', 'PATCH', dict(item, location=location), COOKIE1)
+            self.assertEqual(result[0], 200)
+            item = result[1]['shipment']
+            self.assertEqual((item['creatorName'], item['creator']), ('Georg', 2))
+        self.assertEqual(self.call('/api/shipments', 'POST', dict(self.draft(), location='Berlin'), COOKIE1)[0], 400)
+        self.assertEqual(self.call('/api/shipments', 'POST', dict(self.draft(), model='x' * 121), COOKIE1)[0], 400)
+        # An older client does not clear details it does not know about.
+        older = {key: value for key, value in item.items() if key not in ('model', 'location')}
+        result = self.call('/api/shipments', 'PATCH', older, COOKIE1)
+        self.assertEqual(result[1]['shipment']['model'], 'ThinkPad T14 Gen 4')
+        self.stop()
+        self.start()
+        self.assertEqual(self.call('/api/auth/me', cookie=COOKIE2)[1]['user']['displayName'], 'Georg')
+        self.assertTrue((Path(self.temp.name) / 'before-shipment-details.sqlite').is_file())
+
+    def test_image_lifecycle_access_and_atomic_updates(self):
+        draft = dict(self.draft(), photo=self.photo())
+        status, data, _ = self.call('/api/shipments', 'POST', draft, COOKIE1)
+        self.assertEqual(status, 201)
+        item = data['shipment']
+        url = item['imageUrl']
+        self.assertTrue(url)
+        self.assertEqual(self.call(url)[0], 401)
+        status, pixels, headers = self.call(url, cookie=COOKIE2)
+        self.assertEqual(status, 200)
+        self.assertEqual(headers['Content-Type'], 'image/jpeg')
+        self.assertEqual(headers['Cache-Control'], 'no-store')
+        with Image.open(io.BytesIO(pixels)) as photo:
+            self.assertEqual(photo.size, (80, 60))
+            self.assertFalse(photo.getexif())
+        self.assertEqual(self.call('/api/shipments', 'POST', draft, COOKIE1)[0], 200)
+        self.assertEqual(self.call('/api/shipments', 'POST', dict(draft, photo=self.photo('red')), COOKIE2)[0], 409)
+        changed = self.call('/api/shipments', 'PATCH', dict(item, photo=self.photo('red', 'WEBP')), COOKIE2)[1]['shipment']
+        self.assertEqual(changed['creator'], 1)
+        self.assertNotEqual(changed['imageUrl'], url)
+        new_pixels = self.call(changed['imageUrl'], cookie=COOKIE1)[1]
+        self.assertNotEqual(new_pixels, pixels)
+        self.assertEqual(self.call('/api/shipments', 'PATCH', dict(item, photo=None), COOKIE1)[0], 409)
+        self.assertEqual(self.call(changed['imageUrl'], cookie=COOKIE1)[1], new_pixels)
+        # Omitted image keeps the stored photo across edits and restart.
+        kept = self.call('/api/shipments', 'PATCH', dict(changed, tracking='updated'), COOKIE1)[1]['shipment']
+        self.stop()
+        self.start()
+        self.assertEqual(self.call(kept['imageUrl'], cookie=COOKIE2)[1], new_pixels)
+        removed = self.call('/api/shipments', 'PATCH', dict(kept, photo=None), COOKIE1)[1]['shipment']
+        self.assertEqual(removed['imageUrl'], '')
+        self.assertEqual(self.call(url, cookie=COOKIE2)[0], 404)
+        added = self.call('/api/shipments', 'PATCH', dict(removed, photo=self.photo('green', 'JPEG')), COOKIE1)[1]['shipment']
+        self.assertEqual(self.call('/api/shipments', 'DELETE', {'id': added['id'], 'version': added['version']}, COOKIE2)[0], 200)
+        self.assertEqual(self.call(added['imageUrl'], cookie=COOKIE1)[0], 404)
+        db = connect(self.database)
+        try:
+            self.assertEqual(db.execute('SELECT count(*) FROM shipment_images').fetchone()[0], 0)
+        finally:
+            db.close()
+
+    def test_image_validation_and_metadata_removal(self):
+        for photo in ['data:image/svg+xml;base64,PHN2Zy8+', 'data:image/png;base64,YmFk', {}, 'not-an-image']:
+            self.assertEqual(self.call('/api/shipments', 'POST', dict(self.draft(), photo=photo), COOKIE1)[0], 400 if isinstance(photo, str) else 413)
+        oversized = 'data:image/png;base64,' + base64.b64encode(b'x' * (5 * 1024 * 1024 + 1)).decode()
+        self.assertEqual(self.call('/api/shipments', 'POST', dict(self.draft(), photo=oversized), COOKIE1)[0], 413)
+        with Image.new('RGB', (1800, 300), 'yellow') as source:
+            exif = Image.Exif()
+            exif[315] = 'Synthetic private metadata'
+            data = io.BytesIO()
+            source.save(data, format='JPEG', exif=exif)
+        photo = 'data:image/jpeg;base64,' + base64.b64encode(data.getvalue()).decode()
+        item = self.call('/api/shipments', 'POST', dict(self.draft(), photo=photo), COOKIE1)[1]['shipment']
+        with Image.open(io.BytesIO(self.call(item['imageUrl'], cookie=COOKIE2)[1])) as sanitized:
+            self.assertLessEqual(max(sanitized.size), 1600)
+            self.assertFalse(sanitized.getexif())
+        self.assertEqual(len(self.call('/api/shipments', cookie=COOKIE1)[1]['shipments']), 2)
 
     def test_backup_and_password_roundtrip(self):
         target = Path(self.temp.name) / 'backup.sqlite'

@@ -28,11 +28,19 @@ def shipment_input(raw):
         if not isinstance(value, str) or len(value.strip().encode('utf-16-le', errors='surrogatepass')) // 2 > 120 or re.search(r'[\ud800-\udfff]', value):
             raise ApiError('Bitte die Textfelder prüfen (maximal 120 Zeichen).')
         out[key] = value.strip()
+    model = raw.get('model', '')
+    if not isinstance(model, str) or len(model) > 120 or re.search(r'[\ud800-\udfff]', model):
+        raise ApiError('Das Rechnermodell darf maximal 120 Zeichen enthalten.')
+    out['model'] = model.strip()
+    location = raw.get('location', '')
+    if location not in ('', 'Magdeburg', 'Frankfurt', 'Köln', 'München'):
+        raise ApiError('Bitte einen gültigen Standort auswählen.')
+    out['location'] = location
     if not out['name']:
         raise ApiError('Bitte einen Namen eingeben.')
     if raw.get('carrier') not in ('DHL', 'FedEx'):
         raise ApiError('Bitte DHL oder FedEx auswählen.')
-    if raw.get('reason') not in ('Offboarding', 'Gerätetausch (4 Jahre)', 'Sonstiges'):
+    if raw.get('reason') not in ('Offboarding', 'Gerätetausch (4 Jahre)', 'Remote Onboarding', 'Sonstiges'):
         raise ApiError('Bitte einen gültigen Anlass auswählen.')
     if not valid_date(raw.get('shipped')) or (raw.get('arrived') != '' and not valid_date(raw.get('arrived'))):
         raise ApiError('Bitte ein gültiges Datum eingeben.')
