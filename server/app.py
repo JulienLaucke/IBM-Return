@@ -1,3 +1,4 @@
+import io
 import json
 import logging
 from datetime import datetime, timezone
@@ -7,7 +8,7 @@ import secrets
 import time
 from urllib.parse import urlsplit
 
-from flask import Flask, Response, g, jsonify, request
+from flask import Flask, Response, g, jsonify, request, send_file
 from werkzeug.exceptions import HTTPException
 
 from .database import connect, initialize, transaction
@@ -15,6 +16,7 @@ from .security import (digest, equal_secret, hash_password, normalize_email,
                        valid_email, valid_password, verify_password)
 from .validation import ApiError, shipment_input, valid_version
 from .images import image_input
+from .attachments import pdf_input
 
 FIELDS = 'id,name,carrier,reason,device,tracking,shipped,arrived,version,created,model,location,creator'
 EDITABLE = ('name', 'carrier', 'reason', 'device', 'tracking', 'shipped', 'arrived', 'model', 'location')
@@ -41,7 +43,7 @@ def create_app(*, database, origin, production=True, setup_token=None, static_di
             raise ValueError('Für die Ersteinrichtung ist SETUP_TOKEN mit mindestens 32 Zeichen erforderlich.')
     initial.close()
     app = Flask(__name__, static_folder=None)
-    app.config.update(MAX_CONTENT_LENGTH=7 * 1024 * 1024, DATABASE=str(database))
+    app.config.update(MAX_CONTENT_LENGTH=21 * 1024 * 1024, DATABASE=str(database))
     app.json.ensure_ascii = False
     cookie_name = '__Host-ibm_return' if production else 'ibm_return_dev'
     dummy_hash = hash_password(secrets.token_hex(24))
@@ -80,14 +82,14 @@ def create_app(*, database, origin, production=True, setup_token=None, static_di
             raise ApiError('Deine Sitzung ist abgelaufen. Bitte erneut anmelden.', 401)
         return user
 
-    def body(*, image_allowed=False):
+    def body(*, attachments_allowed=False):
         if not request.headers.get('Content-Type', '').lower().startswith('application/json'):
             raise ApiError('JSON-Eingabe erforderlich.', 415)
         try:
-            if not image_allowed and request.content_length and request.content_length > 16384:
+            if not attachments_allowed and request.content_length and request.content_length > 16384:
                 raise ApiError('Eingabe zu groß.', 413)
             raw = request.get_data()
-            if not image_allowed and len(raw) > 16384:
+            if not attachments_allowed and len(raw) > 16384:
                 raise ApiError('Eingabe zu groß.', 413)
             value = json.loads(raw, parse_constant=lambda _v: (_ for _ in ()).throw(ValueError()))
         except (ValueError, UnicodeError):
@@ -211,6 +213,9 @@ def create_app(*, database, origin, production=True, setup_token=None, static_di
         result['creatorEmail'] = owner['email']
         has_image = db().execute('SELECT 1 FROM shipment_images WHERE shipment_id=?', (row['id'],)).fetchone()
         result['imageUrl'] = f"/api/shipments/{row['id']}/image?v={row['version']}" if has_image else ''
+        pdf = db().execute('SELECT name FROM shipment_pdfs WHERE shipment_id=?', (row['id'],)).fetchone()
+        result['pdfUrl'] = f"/api/shipments/{row['id']}/pdf?v={row['version']}" if pdf else ''
+        result['pdfName'] = pdf['name'] if pdf else ''
         return result
 
     @app.get('/api/shipments/<shipment_id>/image')
@@ -220,6 +225,17 @@ def create_app(*, database, origin, production=True, setup_token=None, static_di
         if not image:
             raise ApiError('Bild nicht gefunden.', 404)
         return Response(image['data'], content_type='image/jpeg', headers={'Content-Disposition': 'inline; filename="rechner.jpg"'})
+
+    @app.get('/api/shipments/<shipment_id>/pdf')
+    def shipment_pdf(shipment_id):
+        require_session()
+        pdf = db().execute('SELECT name,data FROM shipment_pdfs WHERE shipment_id=?', (shipment_id,)).fetchone()
+        if not pdf:
+            raise ApiError('PDF nicht gefunden.', 404)
+        response = send_file(io.BytesIO(pdf['data']), mimetype='application/pdf',
+                             download_name=pdf['name'], as_attachment=True,
+                             conditional=False, etag=False, max_age=0)
+        return response
 
     @app.post('/api/auth/logout')
     def logout():
@@ -251,7 +267,7 @@ def create_app(*, database, origin, production=True, setup_token=None, static_di
         user = require_session()
         if request.method in ('GET', 'HEAD'):
             return jsonify(shipments=[shipment_result(row) for row in db().execute(f'SELECT {FIELDS} FROM shipments ORDER BY created DESC,id DESC')])
-        raw = body(image_allowed=request.method in ('POST', 'PATCH'))
+        raw = body(attachments_allowed=request.method in ('POST', 'PATCH'))
         if request.method == 'DELETE':
             if not isinstance(raw.get('id'), str) or not valid_version(raw.get('version')):
                 raise ApiError('Ungültige Rücksendung.')
@@ -266,6 +282,7 @@ def create_app(*, database, origin, production=True, setup_token=None, static_di
                     raw.setdefault(key, previous[key])
         v = shipment_input(raw)
         photo = image_input(raw['photo']) if 'photo' in raw else None
+        pdf = pdf_input(raw['pdf']) if 'pdf' in raw else None
         values = [v[key] for key in EDITABLE]
         status = 200
         with transaction(db()):
@@ -274,7 +291,9 @@ def create_app(*, database, origin, production=True, setup_token=None, static_di
                 if existing:
                     stored_photo = db().execute('SELECT data FROM shipment_images WHERE shipment_id=?', (v['id'],)).fetchone()
                     photo_conflict = 'photo' in raw and photo != (stored_photo['data'] if stored_photo else None)
-                    if photo_conflict or any(v[key] != existing[key] for key in EDITABLE):
+                    stored_pdf = db().execute('SELECT name,data FROM shipment_pdfs WHERE shipment_id=?', (v['id'],)).fetchone()
+                    pdf_conflict = 'pdf' in raw and pdf != (dict(stored_pdf) if stored_pdf else None)
+                    if pdf_conflict or photo_conflict or any(v[key] != existing[key] for key in EDITABLE):
                         raise ApiError('Eintrag existiert bereits mit anderen Angaben.', 409)
                 else:
                     db().execute('INSERT INTO shipments (name,carrier,reason,device,tracking,shipped,arrived,model,location,id,created,creator,updater) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)', (*values, v['id'], timestamp(), user['id'], user['id']))
@@ -290,6 +309,11 @@ def create_app(*, database, origin, production=True, setup_token=None, static_di
                     db().execute('DELETE FROM shipment_images WHERE shipment_id=?', (v['id'],))
                 else:
                     db().execute('INSERT INTO shipment_images (shipment_id,data) VALUES (?,?) ON CONFLICT(shipment_id) DO UPDATE SET data=excluded.data', (v['id'], photo))
+            if 'pdf' in raw:
+                if pdf is None:
+                    db().execute('DELETE FROM shipment_pdfs WHERE shipment_id=?', (v['id'],))
+                else:
+                    db().execute('INSERT INTO shipment_pdfs (shipment_id,name,data) VALUES (?,?,?) ON CONFLICT(shipment_id) DO UPDATE SET name=excluded.name,data=excluded.data', (v['id'], pdf['name'], pdf['data']))
             result = shipment_result(db().execute(f'SELECT {FIELDS} FROM shipments WHERE id=?', (v['id'],)).fetchone())
         return jsonify(shipment=result), status
 

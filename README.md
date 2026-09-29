@@ -8,6 +8,7 @@ Webanwendung zur gemeinsamen Verwaltung von Rechnerrücksendungen bei Offboardin
 - Zwei E-Mail-/Passwort-Konten; keine offene Registrierung.
 - Anlass „Remote Onboarding“ sowie optionale Angaben zu Rechnermodell und Standort (Magdeburg, Frankfurt, Köln, München).
 - Ein optionales Bild pro Rücksendung, mit Vorschau und geschütztem Abruf.
+- Zusätzlich ein optionaler PDF-Anhang (maximal 10 MB), z. B. ein Versandlabel oder Übergabeprotokoll.
 - Automatische Erstelleranzeige; den eigenen Anzeigenamen unter **Profil** festlegen.
 - Gemeinsame Liste, Bearbeiten, Eingang nachtragen und Löschen mit Bestätigung.
 - Dauerhafte SQLite-Datenbank; Schutz vor dem Überschreiben zwischenzeitlicher Änderungen.
@@ -71,11 +72,13 @@ Beim ersten Python-Start mit vorhandener Datenbank wird vor der Initialisierung 
 
 Der Container verwendet weiterhin UID 1000 und `/app/data`. `APP_ENV=production` aktiviert den Produktionsmodus; vorhandenes `NODE_ENV=production` wird als kompatible Alternative erkannt. Gunicorn läuft mit einem Prozess und vier Threads.
 
-## Bilder und zusätzliche Angaben
+## Bilder, PDF-Anhänge und zusätzliche Angaben
 
 Im Erfassungs- und Bearbeitungsdialog sind Modell, Standort und Bild optional. Zulässig sind JPG, PNG und WebP mit maximal 5 MB und 20 Megapixeln. Der Server prüft das Bild, richtet es aus und speichert eine JPEG-Kopie mit maximal 1600 Pixeln an der längsten Seite. EXIF- und GPS-Metadaten werden entfernt. Bilder lassen sich ersetzen oder entfernen und sind nur für angemeldete Benutzer abrufbar.
 
-Bilder liegen in derselben SQLite-Datenbank wie die Einträge und sind in Datenbanksicherungen enthalten. Beim Löschen einer Rücksendung wird ihr Bild ebenfalls entfernt.
+PDFs können zusätzlich zum Bild hochgeladen, heruntergeladen, ersetzt oder entfernt werden. Der Server prüft Dateiname, Größenlimit sowie PDF-Kopf und Dateiende; er führt keine vollständige Inhalts- oder Virenprüfung durch. Die Originaldatei wird unverändert gespeichert und nur angemeldeten Benutzern als Download ausgeliefert. Bestehende Anhänge bleiben bei normalen Änderungen erhalten.
+
+Bilder und PDFs liegen in derselben SQLite-Datenbank wie die Einträge und sind in Datenbanksicherungen enthalten. Beim Löschen einer Rücksendung werden ihr Bild und ihr PDF ebenfalls entfernt.
 
 Der Ersteller wird vom Server aus der Sitzung gesetzt und bleibt beim Bearbeiten durch den Kollegen erhalten. Für ältere Einträge wird die bereits gespeicherte Benutzer-ID verwendet. Unter **Profil** kann jeder seinen Anzeigenamen (z. B. Julien oder Georg) setzen; andernfalls erscheint die E-Mail-Adresse. Modell und Standort bleiben bei bestehenden Einträgen zunächst leer. Vor der Erweiterung der Tabellen wird einmalig `DATA_DIR/before-shipment-details.sqlite` gesichert.
 
@@ -142,6 +145,7 @@ Die automatisierten Tests prüfen reale HTTP-Anfragen gegen eine temporäre Date
 - Gleichzeitige Schreibzugriffe beider Konten und konsistente Sicherungen.
 - Neue optionale Felder, stabile Erstellerzuordnung und eigene Profilnamen.
 - Bildvalidierung, Größenlimits, Metadatenentfernung, geschützter Abruf, Austausch und Löschung.
+- PDF-Upload und -Download, große Anhänge, Dateinamenprüfung, unveränderte Dateiinhalte sowie gleichzeitige Bild- und PDF-Anhänge.
 
 Build, TypeScript-Prüfung und automatisierte HTTP-Tests wurden erfolgreich ausgeführt. Nach der Bereitstellung wurde der öffentliche Health-Endpunkt erfolgreich geprüft. Die zusätzlichen Felder, Erstellerzuordnung und Bildfunktionen werden durch automatisierte API-Tests geprüft. Versand- und Eingangsdatum werden manuell gepflegt; die App enthält keine automatische DHL-/FedEx-Sendungsabfrage und keine IBM-Systemanbindung.
 

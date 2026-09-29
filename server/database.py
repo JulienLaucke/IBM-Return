@@ -92,6 +92,7 @@ def initialize(path):
                     if column not in shipment_columns:
                         db.execute(f"ALTER TABLE shipments ADD COLUMN {column} TEXT NOT NULL DEFAULT ''")
         db.execute('CREATE TABLE IF NOT EXISTS shipment_images (shipment_id TEXT PRIMARY KEY REFERENCES shipments(id) ON DELETE CASCADE, data BLOB NOT NULL)')
+        db.execute('CREATE TABLE IF NOT EXISTS shipment_pdfs (shipment_id TEXT PRIMARY KEY REFERENCES shipments(id) ON DELETE CASCADE, name TEXT NOT NULL, data BLOB NOT NULL)')
         os.chmod(path, 0o600)
     finally:
         db.close()

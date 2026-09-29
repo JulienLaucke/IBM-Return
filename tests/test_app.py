@@ -278,6 +278,85 @@ class AppTests(unittest.TestCase):
             self.assertFalse(sanitized.getexif())
         self.assertEqual(len(self.call('/api/shipments', cookie=COOKIE1)[1]['shipments']), 2)
 
+    @staticmethod
+    def pdf_attachment(name='Versandlabel.pdf', padding=0):
+        # A small valid one-page PDF with an xref table; no external fixture.
+        objects = [b'<< /Type /Catalog /Pages 2 0 R >>',
+                   b'<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
+                   b'<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] >>']
+        content = b'%PDF-1.4\n'
+        offsets = [0]
+        for i, obj in enumerate(objects, 1):
+            offsets.append(len(content))
+            content += str(i).encode() + b' 0 obj\n' + obj + b'\nendobj\n'
+        if padding:
+            content += b'%' + b'x' * padding + b'\n'
+        xref = len(content)
+        content += b'xref\n0 4\n0000000000 65535 f \n'
+        content += b''.join(f'{offset:010d} 00000 n \n'.encode() for offset in offsets[1:])
+        content += f'trailer\n<< /Size 4 /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF\n'.encode()
+        return {'name': name, 'data': 'data:application/pdf;base64,' + base64.b64encode(content).decode()}
+
+    def test_pdf_lifecycle_and_protected_download(self):
+        attachment = self.pdf_attachment('Übergabe München.pdf')
+        original = base64.b64decode(attachment['data'].split(',')[1])
+        draft = dict(self.draft(), pdf=attachment, photo=self.photo())
+        status, body, _ = self.call('/api/shipments', 'POST', draft, COOKIE1)
+        self.assertEqual(status, 201)
+        item = body['shipment']
+        self.assertEqual(item['pdfName'], attachment['name'])
+        self.assertTrue(item['imageUrl'])
+        self.assertEqual(self.call(item['pdfUrl'])[0], 401)
+        status, downloaded, headers = self.call(item['pdfUrl'], cookie=COOKIE2)
+        self.assertEqual(status, 200)
+        self.assertEqual(downloaded, original)
+        self.assertEqual(headers['Content-Type'], 'application/pdf')
+        self.assertIn('attachment;', headers['Content-Disposition'])
+        self.assertIn("filename*=UTF-8''", headers['Content-Disposition'])
+        self.assertEqual(headers['Cache-Control'], 'no-store')
+        self.assertEqual(self.call('/api/shipments', 'POST', draft, COOKIE2)[0], 200)
+        self.assertEqual(self.call('/api/shipments', 'POST', dict(draft, pdf=self.pdf_attachment('Other.pdf')), COOKIE2)[0], 409)
+        kept = self.call('/api/shipments', 'PATCH', dict(item, tracking='updated'), COOKIE2)[1]['shipment']
+        self.assertEqual(self.call(kept['pdfUrl'], cookie=COOKIE2)[1], original)
+        replaced = self.call('/api/shipments', 'PATCH', dict(kept, pdf=self.pdf_attachment('Replacement.pdf')), COOKIE2)[1]['shipment']
+        self.assertEqual(replaced['creator'], 1)
+        self.assertNotEqual(replaced['pdfUrl'], kept['pdfUrl'])
+        self.assertEqual(self.call('/api/shipments', 'PATCH', dict(kept, pdf=None), COOKIE1)[0], 409)
+        self.assertEqual(self.call(replaced['pdfUrl'], cookie=COOKIE1)[0], 200)
+        self.stop()
+        self.start()
+        self.assertEqual(self.call(replaced['pdfUrl'], cookie=COOKIE2)[1], original)
+        removed = self.call('/api/shipments', 'PATCH', dict(replaced, pdf=None), COOKIE1)[1]['shipment']
+        self.assertEqual((removed['pdfUrl'], removed['pdfName']), ('', ''))
+        self.assertEqual(self.call(replaced['pdfUrl'], cookie=COOKIE2)[0], 404)
+        self.assertEqual(self.call(removed['imageUrl'], cookie=COOKIE1)[0], 200)
+        added = self.call('/api/shipments', 'PATCH', dict(removed, pdf=attachment), COOKIE1)[1]['shipment']
+        self.assertEqual(self.call('/api/shipments', 'DELETE', {'id': added['id'], 'version': added['version']}, COOKIE1)[0], 200)
+        self.assertEqual(self.call(added['pdfUrl'], cookie=COOKIE2)[0], 404)
+        db = connect(self.database)
+        try:
+            self.assertEqual(db.execute('SELECT count(*) FROM shipment_pdfs').fetchone()[0], 0)
+        finally:
+            db.close()
+
+    def test_pdf_validation_and_large_upload(self):
+        old = self.call('/api/shipments', cookie=COOKIE1)[1]['shipments'][0]
+        self.assertEqual((old['pdfName'], old['pdfUrl']), ('', ''))
+        valid = self.pdf_attachment()
+        for value in ['invalid', {'name': '../bad.pdf', 'data': valid['data']},
+                      {'name': 'bad.pdf\r\nheader', 'data': valid['data']},
+                      {'name': 'bad.html', 'data': valid['data']},
+                      {'name': 'bad.pdf', 'data': self.photo()},
+                      {'name': 'bad.pdf', 'data': 'data:application/pdf;base64,YmFk'}]:
+            self.assertEqual(self.call('/api/shipments', 'POST', dict(self.draft(), pdf=value), COOKIE1)[0], 400)
+        large = self.pdf_attachment(padding=8 * 1024 * 1024)
+        result = self.call('/api/shipments', 'POST', dict(self.draft(), pdf=large, photo=self.photo()), COOKIE1)
+        self.assertEqual(result[0], 201)
+        self.assertGreater(len(self.call(result[1]['shipment']['pdfUrl'], cookie=COOKIE2)[1]), 8 * 1024 * 1024)
+        oversized = self.pdf_attachment(padding=10 * 1024 * 1024)
+        self.assertEqual(self.call('/api/shipments', 'POST', dict(self.draft(), pdf=oversized), COOKIE1)[0], 413)
+        self.assertEqual(len(self.call('/api/shipments', cookie=COOKIE1)[1]['shipments']), 2)
+
     def test_backup_and_password_roundtrip(self):
         target = Path(self.temp.name) / 'backup.sqlite'
         backup_database(self.database, target)

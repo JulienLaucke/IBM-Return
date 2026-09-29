@@ -10,4 +10,4 @@ export const shipmentInput = z.object({
  shipped: date, arrived: z.union([z.literal(''),date]),
 }).refine(v=>!v.arrived || v.arrived>=v.shipped,{message:'Das Eingangsdatum darf nicht vor dem Versand liegen.',path:['arrived']});
 export type ShipmentInput = z.infer<typeof shipmentInput>;
-export type Shipment = ShipmentInput & { id:string; version:number; created:string; creator:number; creatorName:string; creatorEmail:string; imageUrl:string };
+export type Shipment = ShipmentInput & { id:string; version:number; created:string; creator:number; creatorName:string; creatorEmail:string; imageUrl:string; pdfUrl:string; pdfName:string };
