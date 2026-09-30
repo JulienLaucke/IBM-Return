@@ -131,6 +131,12 @@ h1 { font-size:clamp(28px,3.1vw,40px); letter-spacing:-1.5px; line-height:1.2; f
 h2 { font-size:18px; font-weight:600; letter-spacing:-.3px; }
 .records-heading p { margin-top:5px; font-size:14px; color:#718096; }
 .records-heading button { color:#64728a; font-size:14px; }
+.month-filter { display:flex; align-items:center; flex-wrap:wrap; gap:12px; padding:0 25px 12px; }
+.month-filter label { color:#536780; font-size:13px; }
+.month-filter [data-slot=select-trigger] { min-width:195px; background:white; border-color:#d8e0eb; }
+.month-filter button { font-size:13px; }
+.records .month-heading th { height:auto; padding-top:12px; padding-bottom:12px; background:#eef2f7; color:#384b63; font-size:13px; font-weight:600; }
+.month-heading span { margin-left:12px; color:#627087; font-size:12px; font-weight:400; }
 .records-tabs { gap:0; }
 .status-tabs { margin:0 24px; height:53px; gap:19px; padding:0; }
 .status-tabs [data-slot=tabs-trigger] { height:53px; padding:0 2px; color:#68788e; font-weight:500; border-radius:0; }

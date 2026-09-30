@@ -220,6 +220,55 @@ class AppTests(unittest.TestCase):
         self.assertEqual(self.call('/api/auth/me', cookie=COOKIE2)[1]['user']['displayName'], 'Georg')
         self.assertTrue((Path(self.temp.name) / 'before-shipment-details.sqlite').is_file())
 
+    def test_month_assignment_validation_and_shared_edits(self):
+        old = self.call('/api/shipments', cookie=COOKIE1)[1]['shipments'][0]
+        self.assertEqual(old['month'], '')
+        self.assertEqual((old['shipped'], old['version']), ('2026-09-15', 3))
+        draft = dict(self.draft(), reason='Remote Onboarding', month='2026-10')
+        status, result, _ = self.call('/api/shipments', 'POST', draft, COOKIE1)
+        self.assertEqual(status, 201)
+        item = result['shipment']
+        self.assertEqual((item['month'], item['shipped']), ('2026-10', '2026-09-15'))
+        self.assertEqual(self.call('/api/shipments', 'POST', draft, COOKIE2)[0], 200)
+        self.assertEqual(self.call('/api/shipments', 'POST', dict(draft, month='2026-11'), COOKIE2)[0], 409)
+        # Older clients can record arrival without erasing the assigned month.
+        older = {key: value for key, value in item.items() if key != 'month'}
+        changed = self.call('/api/shipments', 'PATCH', dict(older, arrived='2026-09-20'), COOKIE2)[1]['shipment']
+        self.assertEqual((changed['month'], changed['creator']), ('2026-10', 1))
+        moved = self.call('/api/shipments', 'PATCH', dict(changed, month='2027-01'), COOKIE2)[1]['shipment']
+        self.assertEqual(self.call('/api/shipments', 'PATCH', dict(changed, month=''), COOKIE1)[0], 409)
+        self.stop()
+        self.start()
+        stored = next(row for row in self.call('/api/shipments', cookie=COOKIE1)[1]['shipments'] if row['id'] == item['id'])
+        self.assertEqual(stored['month'], '2027-01')
+        cleared = self.call('/api/shipments', 'PATCH', dict(moved, month=''), COOKIE1)[1]['shipment']
+        self.assertEqual(cleared['month'], '')
+        self.assertEqual(cleared['shipped'], draft['shipped'])
+        for month in [None, 202610, {}, '2026-00', '2026-13', '2026-1', '0000-01', '2026-10-01', '2026-10\n']:
+            with self.subTest(month=month):
+                self.assertEqual(self.call('/api/shipments', 'POST', dict(self.draft(), month=month), COOKIE1)[0], 400)
+        self.assertTrue((Path(self.temp.name) / 'before-shipment-months.sqlite').is_file())
+
+    def test_month_migration_preserves_attachments(self):
+        draft = dict(self.draft(), photo=self.photo(), pdf=self.pdf_attachment())
+        item = self.call('/api/shipments', 'POST', draft, COOKIE1)[1]['shipment']
+        photo = self.call(item['imageUrl'], cookie=COOKIE1)[1]
+        pdf = self.call(item['pdfUrl'], cookie=COOKIE1)[1]
+        self.stop()
+        # Recreate the immediately preceding schema, which already had attachments.
+        with sqlite3.connect(self.database) as db:
+            db.execute('ALTER TABLE shipments DROP COLUMN month')
+        backup = Path(self.temp.name) / 'before-shipment-months.sqlite'
+        backup.unlink()
+        self.start()
+        migrated = next(row for row in self.call('/api/shipments', cookie=COOKIE2)[1]['shipments'] if row['id'] == item['id'])
+        self.assertEqual(migrated, item)
+        self.assertEqual(self.call(item['imageUrl'], cookie=COOKIE2)[1], photo)
+        self.assertEqual(self.call(item['pdfUrl'], cookie=COOKIE2)[1], pdf)
+        with sqlite3.connect(backup) as db:
+            self.assertEqual(db.execute('SELECT data FROM shipment_pdfs').fetchone()[0], pdf)
+            self.assertNotIn('month', [row[1] for row in db.execute('PRAGMA table_info(shipments)')])
+
     def test_image_lifecycle_access_and_atomic_updates(self):
         draft = dict(self.draft(), photo=self.photo())
         status, data, _ = self.call('/api/shipments', 'POST', draft, COOKIE1)

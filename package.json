@@ -10,6 +10,7 @@
     "start": "python -m server",
     "dev": "vite --host 127.0.0.1",
     "test": "python -m unittest discover -s tests -v",
+    "test:months": "node --test tests/months.test.mjs",
     "typecheck": "tsc --noEmit",
     "backup": "python -m server.backup",
     "reset-password": "python -m server.reset_password"

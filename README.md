@@ -11,6 +11,7 @@ Webanwendung zur gemeinsamen Verwaltung von Rechnerrücksendungen bei Offboardin
 - Zusätzlich ein optionaler PDF-Anhang (maximal 10 MB), z. B. ein Versandlabel oder Übergabeprotokoll.
 - Automatische Erstelleranzeige; den eigenen Anzeigenamen unter **Profil** festlegen.
 - Gemeinsame Liste, Bearbeiten, Eingang nachtragen und Löschen mit Bestätigung.
+- Monatsüberschriften und Monatsfilter mit passenden Statuszählern; frei wählbarer Zuordnungsmonat für Remote Onboarding.
 - Dauerhafte SQLite-Datenbank; Schutz vor dem Überschreiben zwischenzeitlicher Änderungen.
 - Passwortwechsel und Abmelden; acht Stunden gültige serverseitige Sitzungen.
 - Ersteinrichtung mit einem einmaligen Einrichtungsschlüssel.
@@ -82,6 +83,14 @@ Bilder und PDFs liegen in derselben SQLite-Datenbank wie die Einträge und sind 
 
 Der Ersteller wird vom Server aus der Sitzung gesetzt und bleibt beim Bearbeiten durch den Kollegen erhalten. Für ältere Einträge wird die bereits gespeicherte Benutzer-ID verwendet. Unter **Profil** kann jeder seinen Anzeigenamen (z. B. Julien oder Georg) setzen; andernfalls erscheint die E-Mail-Adresse. Modell und Standort bleiben bei bestehenden Einträgen zunächst leer. Vor der Erweiterung der Tabellen wird einmalig `DATA_DIR/before-shipment-details.sqlite` gesichert.
 
+## Monatsübersicht
+
+Die Liste ist nach Monaten und Jahren gegliedert, neueste Monate zuerst. Im Filter **Monat** lässt sich ein einzelner Monat oder **Alle Monate** auswählen. Die Kennzahlen und Statuszähler beziehen sich auf den ausgewählten Monat; zusätzlich kann nach „Unterwegs“ oder „Eingetroffen“ gefiltert werden.
+
+Das optionale Feld **Zuordnungsmonat** im Erfassungs- und Bearbeitungsdialog erlaubt z. B. „Oktober 2026“ für ein Remote Onboarding, dessen Rechner schon im September verschickt wird. Bleibt das Feld leer, gilt automatisch der Versandmonat. Das gilt auch für bestehende Einträge. Das Eingangsdatum beeinflusst die Monatszuordnung nicht. Beim Erfassen aus einer gefilterten Monatsansicht wird der ausgewählte Monat vorbelegt.
+
+Die Zuordnung wird gemeinsam für beide Konten gespeichert. Vor der additiven Datenbankerweiterung wird einmalig `DATA_DIR/before-shipment-months.sqlite` gesichert. Bestehende Daten, Anhänge und Versionsnummern bleiben erhalten.
+
 ## Betrieb, Sicherung und Wiederherstellung
 
 Die Datei `returns.sqlite` sowie die SQLite-Begleitdateien liegen unter `DATA_DIR`. Dieser Ordner wird niemals über HTTP ausgeliefert. Das Datenverzeichnis nicht löschen oder durch einen leeren Datenträger ersetzen: Ohne die Datenbank fehlen Konten und Rücksendungen.
@@ -122,6 +131,7 @@ Frontend: React, TypeScript, Vite und Tailwind. Backend: Python, Flask, Gunicorn
 corepack pnpm install --frozen-lockfile
 corepack pnpm run build
 corepack pnpm run typecheck
+corepack pnpm run test:months
 python -m unittest discover -s tests -v
 ```
 
@@ -146,6 +156,7 @@ Die automatisierten Tests prüfen reale HTTP-Anfragen gegen eine temporäre Date
 - Neue optionale Felder, stabile Erstellerzuordnung und eigene Profilnamen.
 - Bildvalidierung, Größenlimits, Metadatenentfernung, geschützter Abruf, Austausch und Löschung.
 - PDF-Upload und -Download, große Anhänge, Dateinamenprüfung, unveränderte Dateiinhalte sowie gleichzeitige Bild- und PDF-Anhänge.
+- Monatszuordnung, ältere Clients, Jahreswechsel, Monats-/Statusfilter und Migration mit bestehenden Anhängen.
 
 Build, TypeScript-Prüfung und automatisierte HTTP-Tests wurden erfolgreich ausgeführt. Nach der Bereitstellung wurde der öffentliche Health-Endpunkt erfolgreich geprüft. Die zusätzlichen Felder, Erstellerzuordnung und Bildfunktionen werden durch automatisierte API-Tests geprüft. Versand- und Eingangsdatum werden manuell gepflegt; die App enthält keine automatische DHL-/FedEx-Sendungsabfrage und keine IBM-Systemanbindung.
 

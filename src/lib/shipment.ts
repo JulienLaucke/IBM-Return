@@ -6,6 +6,7 @@ export const shipmentInput = z.object({
  carrier: z.enum(['DHL','FedEx']), reason: z.enum(['Offboarding','Gerätetausch (4 Jahre)','Remote Onboarding','Sonstiges']),
  model: z.string().trim().max(120).default(''),
  location: z.enum(['','Magdeburg','Frankfurt','Köln','München']).default(''),
+ month: z.string().refine(v=>v==='' || (/^[0-9]{4}-(0[1-9]|1[0-2])$/.test(v) && !v.startsWith('0000')),'Bitte einen gültigen Zuordnungsmonat eingeben (JJJJ-MM).').default(''),
  device: z.string().trim().max(120), tracking: z.string().trim().max(120),
  shipped: date, arrived: z.union([z.literal(''),date]),
 }).refine(v=>!v.arrived || v.arrived>=v.shipped,{message:'Das Eingangsdatum darf nicht vor dem Versand liegen.',path:['arrived']});

@@ -46,6 +46,10 @@ def shipment_input(raw):
         raise ApiError('Bitte ein gültiges Datum eingeben.')
     if raw['arrived'] and raw['arrived'] < raw['shipped']:
         raise ApiError('Das Eingangsdatum darf nicht vor dem Versand liegen.')
+    month = raw.get('month', '')
+    if not isinstance(month, str) or (month != '' and not valid_date(month + '-01')):
+        raise ApiError('Bitte einen gültigen Zuordnungsmonat eingeben (JJJJ-MM).')
+    out['month'] = month
     if not isinstance(raw.get('id'), str) or not re.fullmatch(r'[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}', raw['id']):
         raise ApiError('Ungültige Rücksendung.')
     out.update({key: raw[key] for key in ('id', 'carrier', 'reason', 'shipped', 'arrived')})

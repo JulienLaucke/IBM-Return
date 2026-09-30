@@ -18,8 +18,8 @@ from .validation import ApiError, shipment_input, valid_version
 from .images import image_input
 from .attachments import pdf_input
 
-FIELDS = 'id,name,carrier,reason,device,tracking,shipped,arrived,version,created,model,location,creator'
-EDITABLE = ('name', 'carrier', 'reason', 'device', 'tracking', 'shipped', 'arrived', 'model', 'location')
+FIELDS = 'id,name,carrier,reason,device,tracking,shipped,arrived,version,created,model,location,creator,month'
+EDITABLE = ('name', 'carrier', 'reason', 'device', 'tracking', 'shipped', 'arrived', 'model', 'location', 'month')
 SESSION_SECONDS = 8 * 60 * 60
 
 
@@ -276,9 +276,9 @@ def create_app(*, database, origin, production=True, setup_token=None, static_di
             return jsonify(ok=True)
         # Older clients omit new optional fields: retain them on edits.
         if request.method == 'PATCH':
-            previous = db().execute('SELECT model,location FROM shipments WHERE id=?', (raw.get('id') if isinstance(raw.get('id'), str) else '',)).fetchone()
+            previous = db().execute('SELECT model,location,month FROM shipments WHERE id=?', (raw.get('id') if isinstance(raw.get('id'), str) else '',)).fetchone()
             if previous:
-                for key in ('model', 'location'):
+                for key in ('model', 'location', 'month'):
                     raw.setdefault(key, previous[key])
         v = shipment_input(raw)
         photo = image_input(raw['photo']) if 'photo' in raw else None
@@ -296,12 +296,12 @@ def create_app(*, database, origin, production=True, setup_token=None, static_di
                     if pdf_conflict or photo_conflict or any(v[key] != existing[key] for key in EDITABLE):
                         raise ApiError('Eintrag existiert bereits mit anderen Angaben.', 409)
                 else:
-                    db().execute('INSERT INTO shipments (name,carrier,reason,device,tracking,shipped,arrived,model,location,id,created,creator,updater) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)', (*values, v['id'], timestamp(), user['id'], user['id']))
+                    db().execute('INSERT INTO shipments (name,carrier,reason,device,tracking,shipped,arrived,model,location,month,id,created,creator,updater) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)', (*values, v['id'], timestamp(), user['id'], user['id']))
                     status = 201
             else:
                 if not valid_version(raw.get('version')):
                     raise ApiError('Ungültige Version.')
-                result = db().execute('UPDATE shipments SET name=?,carrier=?,reason=?,device=?,tracking=?,shipped=?,arrived=?,model=?,location=?,updater=?,version=version+1 WHERE id=? AND version=?', (*values, user['id'], v['id'], raw['version']))
+                result = db().execute('UPDATE shipments SET name=?,carrier=?,reason=?,device=?,tracking=?,shipped=?,arrived=?,model=?,location=?,month=?,updater=?,version=version+1 WHERE id=? AND version=?', (*values, user['id'], v['id'], raw['version']))
                 if not result.rowcount:
                     raise ApiError('Dieser Eintrag wurde inzwischen geändert oder entfernt. Bitte die Liste aktualisieren.', 409)
             if 'photo' in raw:
